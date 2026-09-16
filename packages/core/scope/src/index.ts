@@ -14,8 +14,20 @@ export type { ScopeLayer } from './store.ts'
 /** An opaque, identity-compared scope key. */
 export type ScopeKey = object
 
-/** Context tag written by {@link createScope}. */
-const kScope = Symbol('dsh.scope')
+/**
+ * Context tag written by {@link createScope}. A process-global symbol, like
+ * Cordis's own context brand, because a DSH profile installs plugins into its
+ * own `node_modules`: an independently installed copy of this package must read
+ * the tag another copy wrote. A module-local symbol instead makes `scopeOf()`
+ * miss, which silently turns a per-agent registration into a context-global one.
+ */
+const kScope = Symbol.for('dsh-scope.context-tag')
+
+/**
+ * Process-global slot holding the tables that must stay shared when one process
+ * installs two copies of this package.
+ */
+const kIdentity = Symbol.for('dsh-scope.identity')
 
 declare const ScopedBrand: unique symbol
 
@@ -27,7 +39,7 @@ declare const ScopedBrand: unique symbol
 export type Scoped<T extends object> = object & { readonly [ScopedBrand]: T }
 
 /** The key associated with each carrier. Presence distinguishes an unkeyed carrier from a non-carrier. */
-const carrierKeys = new WeakMap<object, ScopeKey | undefined>()
+const carrierKeys = scopeIdentity().carriers
 
 /**
  * The enclosing scope of each key. One relation powers both directions of
@@ -36,7 +48,29 @@ const carrierKeys = new WeakMap<object, ScopeKey | undefined>()
  * extends UP it (a listener tagged with an ancestor receives events dispatched
  * to a descendant key — {@link scopeTarget}).
  */
-const scopeParents = new WeakMap<ScopeKey, ScopeKey>()
+const scopeParents = scopeIdentity().parents
+
+/** Module state shared by every installed copy of this package. */
+interface ScopeIdentity {
+  /** The enclosing scope of each key. */
+  readonly parents: WeakMap<ScopeKey, ScopeKey>
+  /** The routing key of each carrier, including unkeyed ones. */
+  readonly carriers: WeakMap<object, ScopeKey | undefined>
+}
+
+/**
+ * Read the process-global scope identity, creating it on first use.
+ * @returns the tables shared by every installed copy of this package.
+ */
+function scopeIdentity(): ScopeIdentity {
+  const existing = Reflect.get(globalThis, kIdentity) as unknown
+  if (existing !== null && typeof existing === 'object'
+    && (existing as ScopeIdentity).parents instanceof WeakMap
+    && (existing as ScopeIdentity).carriers instanceof WeakMap) return existing as ScopeIdentity
+  const identity: ScopeIdentity = { parents: new WeakMap(), carriers: new WeakMap() }
+  Reflect.set(globalThis, kIdentity, identity)
+  return identity
+}
 
 /** The privileged handle to move one scope key's parent link. */
 export interface ScopeParentBinding {

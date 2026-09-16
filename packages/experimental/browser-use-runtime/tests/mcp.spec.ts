@@ -197,6 +197,27 @@ describe('Session MCP Loader composition', () => {
     }
   })
 
+  it('mounts the same provider for two Sessions in launch mode without a global registration conflict', async () => {
+    const { ctx, root } = await load(false)
+    const first = await ctx.agents.create({ sessionId: SessionId('launch-first') })
+    const second = await ctx.agents.create({ sessionId: SessionId('launch-second') })
+
+    const pids: number[] = []
+    for (const { agent } of [first, second]) {
+      await warm(ctx, agent)
+      // A per-Session registration must never reach the global layer: the
+      // second Session's mount would collide with the first one's tool names.
+      expect(ctx.tools.schemas().filter(tool => tool.name.startsWith('mcp__browser-fixture__'))).toEqual([])
+      expect(ctx.tools.schemas(agent).some(tool => tool.name === TOOL)).toBe(true)
+      const result = await execute(ctx, agent)
+      expect(result.isError).toBe(false)
+      pids.push((result.value as { structuredContent: { pid: number } }).structuredContent.pid)
+    }
+
+    expect(new Set(pids).size).toBe(2)
+    expect((await events(root)).filter(event => event.event === 'start').length).toBeGreaterThan(0)
+  })
+
   it('keeps unrelated and child Sessions running without a busy attachment and admits a later owner', async () => {
     const { ctx, root, model } = await load(true)
     registerIndependentTool(ctx)
