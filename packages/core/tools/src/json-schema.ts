@@ -394,6 +394,102 @@ export function assertSupportedJsonSchema(schema: unknown): asserts schema is Js
  * @param schema - untrusted caller-supplied schema.
  * @returns Assertion that the schema belongs to the supported subset and has an object root.
  */
+/** Maximum advertised-schema nesting the normalizer rewrites before giving up. */
+const MAX_NORMALIZE_DEPTH = 32
+
+/**
+ * Rewrite an advertised JSON Schema into the enforced subset.
+ *
+ * Providers — notably MCP servers — regularly advertise vocabulary this subset
+ * does not implement: `$schema`, `$ref`, `propertyNames`, `minimum`, or a
+ * subschema-valued `additionalProperties`. An input schema cannot simply be
+ * dropped the way an unsupported *output* schema is, because the model still
+ * needs the parameter shape; so unsupported vocabulary is removed while every
+ * supported constraint that survives keeps its meaning.
+ * @param candidate - untrusted advertised schema.
+ * @returns a schema accepted by {@link assertSupportedJsonSchema}.
+ */
+export function normalizeAdvertisedJsonSchema(candidate: unknown): Record<string, unknown> {
+  const normalized = normalizeSchemaNode(candidate, 0)
+  try {
+    assertSupportedJsonSchema(normalized)
+  } catch {
+    return {}
+  }
+  return normalized
+}
+
+/** Rewrite one schema node, keeping only the enforced vocabulary. */
+function normalizeSchemaNode(candidate: unknown, depth: number): Record<string, unknown> {
+  if (depth > MAX_NORMALIZE_DEPTH || !isPlainJsonRecord(candidate)) return {}
+  const node: Record<string, unknown> = {}
+  if (typeof candidate.description === 'string') node.description = candidate.description
+  if (typeof candidate.title === 'string') node.title = candidate.title
+  if (isJsonValue(candidate.default)) node.default = candidate.default
+  if (isJsonValue(candidate.examples)) node.examples = candidate.examples
+
+  const oneOf = candidate.oneOf
+  if (isPlainJsonArray(oneOf) && oneOf.length >= 2) {
+    node.oneOf = oneOf.map(branch => normalizeSchemaNode(branch, depth + 1))
+    return node
+  }
+
+  const type = typeof candidate.type === 'string' && (SCHEMA_TYPES as readonly string[]).includes(candidate.type)
+    ? candidate.type
+    : undefined
+  if (type === undefined) return node
+  node.type = type
+
+  if (type === 'object') {
+    const properties = normalizeSchemaProperties(candidate.properties, depth)
+    if (properties !== undefined) {
+      node.properties = properties
+      const required = normalizeRequired(candidate.required, properties)
+      if (required !== undefined) node.required = required
+    }
+    if (typeof candidate.additionalProperties === 'boolean') node.additionalProperties = candidate.additionalProperties
+    else if (isPlainJsonRecord(candidate.additionalProperties)) node.additionalProperties = true
+    return node
+  }
+
+  if (type === 'array') {
+    const advertisedItems = candidate.items
+    const items = isPlainJsonArray(advertisedItems) ? advertisedItems[0] : advertisedItems
+    if (items !== undefined) node.items = normalizeSchemaNode(items, depth + 1)
+    return node
+  }
+
+  const enumValues = normalizeScalarEnum(candidate.enum, type)
+  if (enumValues !== undefined) node.enum = enumValues
+  if (scalarMatches(type as JsonSchemaScalarType, candidate.const)) node.const = candidate.const
+  return node
+}
+
+/** Rewrite every declared property; an empty result is dropped so `required` cannot dangle. */
+function normalizeSchemaProperties(candidate: unknown, depth: number): Record<string, unknown> | undefined {
+  if (!isPlainJsonRecord(candidate)) return undefined
+  const properties: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(candidate)) properties[key] = normalizeSchemaNode(value, depth + 1)
+  return Object.keys(properties).length > 0 ? properties : undefined
+}
+
+/** Keep declared required names that still exist as properties, without duplicates. */
+function normalizeRequired(candidate: unknown, properties: Record<string, unknown>): string[] | undefined {
+  if (!isPlainJsonArray(candidate)) return undefined
+  const required = [...new Set(candidate.filter(
+    (entry): entry is string => typeof entry === 'string' && Object.hasOwn(properties, entry),
+  ))]
+  return required.length > 0 ? required : undefined
+}
+
+/** Keep only advertised enum members matching the declared scalar type. */
+function normalizeScalarEnum(candidate: unknown, type: string): JsonSchemaScalar[] | undefined {
+  if (!isPlainJsonArray(candidate)) return undefined
+  const values = candidate.filter((entry): entry is JsonSchemaScalar =>
+    scalarMatches(type as JsonSchemaScalarType, entry))
+  return values.length > 0 ? values : undefined
+}
+
 export function assertObjectJsonSchema(schema: unknown): asserts schema is ObjectJsonSchema {
   const violations: string[] = []
   checkSchemaNode(schema, 'schema', violations, new Set())

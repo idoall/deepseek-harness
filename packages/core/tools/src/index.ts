@@ -84,6 +84,7 @@ export {
 export {
   assertSupportedJsonSchema,
   assertObjectJsonSchema,
+  normalizeAdvertisedJsonSchema,
   validateJsonSchemaValue,
   JsonSchemaError,
   type JsonSchemaNode,

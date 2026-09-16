@@ -20,7 +20,7 @@ import { isImageAdmissionError } from '@deepseek-ai/dsh-attachment'
 import type { AttachmentStore, ImageAttachmentRef, ImageMediaType, SaveImageAttachment } from '@deepseek-ai/dsh-attachment'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
-import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema, normalizeAdvertisedJsonSchema } from '@deepseek-ai/dsh-tools'
 import type { JsonSchemaNode } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 
@@ -181,6 +181,21 @@ interface PreparedProjection {
   content: ContentBlock[]
 }
 
+/**
+ * Normalize an advertised input schema into the enforced subset.
+ *
+ * Mirrors {@link supportedOutputSchema}, with one deliberate difference: an
+ * unsupported *input* schema cannot be dropped, because the model still needs
+ * the parameter shape. Unsupported provider vocabulary is removed instead of
+ * failing the whole tool — and, through a provider that treats startup
+ * readiness as mandatory, every Session that mounts it.
+ * @param candidate - upstream JSON input schema.
+ * @returns the normalized parameter schema.
+ */
+function supportedInputSchema(candidate: Record<string, unknown>): Record<string, unknown> {
+  return normalizeAdvertisedJsonSchema(candidate)
+}
+
 /** Keep a supported advertised schema; unsupported MCP vocabulary falls back to JsonValue. */
 function supportedOutputSchema(candidate: unknown): JsonSchemaNode | undefined {
   if (candidate === undefined) return undefined
@@ -231,7 +246,7 @@ export function createMcpToolDefinition(
   return {
     name,
     description,
-    parameters: inputSchema,
+    parameters: supportedInputSchema(inputSchema),
     output: createOutput(rawName, supportedOutputSchema(options.outputSchema)),
     execute: createExecutor(ctx, options, projections),
     finalizeContent(exec: Readonly<ToolExecution>, result: Readonly<ToolExecutionResult>) {

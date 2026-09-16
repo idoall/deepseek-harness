@@ -4,6 +4,7 @@ import {
   assertObjectJsonSchema,
   assertSupportedJsonSchema,
   JsonSchemaError,
+  normalizeAdvertisedJsonSchema,
   validateJsonSchemaValue,
   type JsonSchemaNode,
   type ObjectJsonSchema,
@@ -451,5 +452,104 @@ describe('validateJsonSchemaValue', () => {
   it('keeps assertNever as a forged-schema backstop', () => {
     const forged = { type: 'tuple' } as unknown as JsonSchemaNode
     expect(() => validateJsonSchemaValue(forged, 1)).toThrow(/tuple/)
+  })
+})
+
+describe('normalizeAdvertisedJsonSchema', () => {
+  it('keeps the supported subset and drops unknown vocabulary', () => {
+    const result = normalizeAdvertisedJsonSchema({
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      $id: 'urn:example',
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Target URL', format: 'uri', minLength: 1 },
+      },
+      required: ['url', 'missing'],
+      additionalProperties: false,
+      title: 'Navigate',
+    })
+    assertSupportedJsonSchema(result)
+    expect(result).toStrictEqual({
+      type: 'object',
+      properties: { url: { type: 'string', description: 'Target URL' } },
+      required: ['url'],
+      additionalProperties: false,
+      title: 'Navigate',
+    })
+  })
+
+  it('turns a subschema-valued additionalProperties into the open default', () => {
+    const result = normalizeAdvertisedJsonSchema({
+      type: 'object',
+      properties: {
+        data: { type: 'object', propertyNames: { type: 'string' }, additionalProperties: { type: 'string' } },
+      },
+    })
+    assertSupportedJsonSchema(result)
+    expect(result).toStrictEqual({
+      type: 'object',
+      properties: { data: { type: 'object', additionalProperties: true } },
+    })
+  })
+
+  it('falls back to the unconstrained schema when the root cannot be represented', () => {
+    expect(normalizeAdvertisedJsonSchema({ $ref: '#/$defs/thing' })).toStrictEqual({})
+    expect(normalizeAdvertisedJsonSchema({ $ref: '#/$defs/thing', description: 'kept' }))
+      .toStrictEqual({ description: 'kept' })
+  })
+
+  it('prefers oneOf over sibling constraints, matching the enforced subset', () => {
+    const result = normalizeAdvertisedJsonSchema({
+      type: 'object',
+      oneOf: [{ type: 'string', minimum: 1 }, { type: 'number' }],
+      properties: { dropped: { type: 'string' } },
+    })
+    assertSupportedJsonSchema(result)
+    expect(result).toStrictEqual({ oneOf: [{ type: 'string' }, { type: 'number' }] })
+  })
+
+  it('keeps only enum members matching the declared scalar type', () => {
+    const result = normalizeAdvertisedJsonSchema({ type: 'string', enum: ['a', 2, null, 'b'] })
+    assertSupportedJsonSchema(result)
+    expect(result).toStrictEqual({ type: 'string', enum: ['a', 'b'] })
+  })
+
+  it('accepts advertised shapes that previously failed tool registration', () => {
+    const advertised: unknown[] = [
+      {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {},
+        additionalProperties: false,
+      },
+      {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: { index: { type: 'number', minimum: 0, maximum: 10 } },
+      },
+      {
+        $schema: 'https://json-schema.org/draft/2020-12/schema',
+        type: 'object',
+        properties: {
+          data: { type: 'object', propertyNames: { type: 'string' }, additionalProperties: { type: 'string' } },
+        },
+      },
+      { type: 'array', items: [{ type: 'string' }, { type: 'number' }] },
+      { type: ['string', 'null'] },
+    ]
+    for (const advertisedSchema of advertised) {
+      const result = normalizeAdvertisedJsonSchema(advertisedSchema)
+      expect(() => { assertSupportedJsonSchema(result) }).not.toThrow()
+    }
+  })
+
+  it('is idempotent', () => {
+    const once = normalizeAdvertisedJsonSchema({
+      $schema: 'x',
+      type: 'object',
+      properties: { a: { type: 'string', pattern: '^a' } },
+      required: ['a'],
+    })
+    expect(normalizeAdvertisedJsonSchema(once)).toStrictEqual(once)
   })
 })
