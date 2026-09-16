@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-09-17-mcp-browser-tools-per-session-scope.md
-2026-09-17-mcp-browser-tools-per-session-scope.md: 40ed27d38e2d348ccd880f7e0e684b4a42e3e00a
-2026-09-17-mcp-browser-tools-per-session-scope.zh.md: 4b7c2f300a46342bceab3a5f239357e251423622
+2026-09-17-mcp-browser-tools-per-session-scope.md: 3d8de85bc7ebf99a7cbe5ad073a0866e0e8b1077
+2026-09-17-mcp-browser-tools-per-session-scope.zh.md: af0adb6f0f0b104a782fca065e1fbc04057a8965

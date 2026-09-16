@@ -498,14 +498,28 @@ describe('normalizeAdvertisedJsonSchema', () => {
       .toStrictEqual({ description: 'kept' })
   })
 
-  it('prefers oneOf over sibling constraints, matching the enforced subset', () => {
+  it('keeps a declared type and its constraints over a coexisting union', () => {
     const result = normalizeAdvertisedJsonSchema({
       type: 'object',
       oneOf: [{ type: 'string', minimum: 1 }, { type: 'number' }],
-      properties: { dropped: { type: 'string' } },
+      properties: { kept: { type: 'string' } },
     })
     assertSupportedJsonSchema(result)
+    expect(result).toStrictEqual({ type: 'object', properties: { kept: { type: 'string' } } })
+  })
+
+  it('keeps a union only when the node declares no type', () => {
+    const result = normalizeAdvertisedJsonSchema({ oneOf: [{ type: 'string' }, { type: 'number' }] })
+    assertSupportedJsonSchema(result)
     expect(result).toStrictEqual({ oneOf: [{ type: 'string' }, { type: 'number' }] })
+  })
+
+  it('drops a union whose branch normalizes to the unconstrained schema', () => {
+    const result = normalizeAdvertisedJsonSchema({
+      oneOf: [{ anyOf: [{ type: 'string' }] }, { type: 'number' }],
+    })
+    assertSupportedJsonSchema(result)
+    expect(result).toStrictEqual({})
   })
 
   it('keeps only enum members matching the declared scalar type', () => {

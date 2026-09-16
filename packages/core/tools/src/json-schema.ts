@@ -394,18 +394,29 @@ export function assertSupportedJsonSchema(schema: unknown): asserts schema is Js
  * @param schema - untrusted caller-supplied schema.
  * @returns Assertion that the schema belongs to the supported subset and has an object root.
  */
+export function assertObjectJsonSchema(schema: unknown): asserts schema is ObjectJsonSchema {
+  const violations: string[] = []
+  checkSchemaNode(schema, 'schema', violations, new Set())
+  if (violations.length === 0
+    && (!isJsonSchemaRecord(schema) || !Object.hasOwn(schema, 'type') || schema.type !== 'object')) {
+    violations.push('schema.type must be "object" (structured output is object-rooted)')
+  }
+  if (violations.length > 0) throw new JsonSchemaError(violations)
+}
+
 /** Maximum advertised-schema nesting the normalizer rewrites before giving up. */
 const MAX_NORMALIZE_DEPTH = 32
 
 /**
  * Rewrite an advertised JSON Schema into the enforced subset.
  *
- * Providers — notably MCP servers — regularly advertise vocabulary this subset
- * does not implement: `$schema`, `$ref`, `propertyNames`, `minimum`, or a
- * subschema-valued `additionalProperties`. An input schema cannot simply be
- * dropped the way an unsupported *output* schema is, because the model still
- * needs the parameter shape; so unsupported vocabulary is removed while every
- * supported constraint that survives keeps its meaning.
+ * Advertisers — notably MCP servers — regularly emit vocabulary this subset
+ * does not implement: `$schema`, `$ref`, `propertyNames`, `minimum`/`maximum`,
+ * a subschema-valued `additionalProperties`, or a `type` union. A dropped
+ * *output* schema costs only structured-output validation, but a dropped
+ * *input* schema costs the model the parameter description it needs to call the
+ * tool at all, so unsupported vocabulary is removed instead of rejecting the
+ * tool that advertises it.
  * @param candidate - untrusted advertised schema.
  * @returns a schema accepted by {@link assertSupportedJsonSchema}.
  */
@@ -414,9 +425,15 @@ export function normalizeAdvertisedJsonSchema(candidate: unknown): Record<string
   try {
     assertSupportedJsonSchema(normalized)
   } catch {
+    // A rewriting defect must not become a tool-registration failure.
     return {}
   }
   return normalized
+}
+
+/** Whether a normalized node constrains values rather than only annotating them. */
+function constrainsValues(node: Record<string, unknown>): boolean {
+  return Object.keys(node).some(key => CONSTRAINT_KEYWORDS.has(key))
 }
 
 /** Rewrite one schema node, keeping only the enforced vocabulary. */
@@ -428,15 +445,24 @@ function normalizeSchemaNode(candidate: unknown, depth: number): Record<string, 
   if (isJsonValue(candidate.default)) node.default = candidate.default
   if (isJsonValue(candidate.examples)) node.examples = candidate.examples
 
-  const oneOf = candidate.oneOf
-  if (isPlainJsonArray(oneOf) && oneOf.length >= 2) {
-    node.oneOf = oneOf.map(branch => normalizeSchemaNode(branch, depth + 1))
-    return node
-  }
-
   const type = typeof candidate.type === 'string' && (SCHEMA_TYPES as readonly string[]).includes(candidate.type)
     ? candidate.type
     : undefined
+
+  // The subset rejects `type` beside `oneOf`. A declared type carries the
+  // parameter's own root — tool parameters are object-rooted — while the union
+  // only narrows it, so the type wins and the union is dropped: the surviving
+  // schema accepts everything the union admitted, and the provider still
+  // validates the arguments it receives.
+  const oneOf = candidate.oneOf
+  if (type === undefined && isPlainJsonArray(oneOf) && oneOf.length >= 2) {
+    const branches = oneOf.map(branch => normalizeSchemaNode(branch, depth + 1))
+    // An unconstrained branch matches every value, so exact-one `oneOf` would
+    // then reject inputs the advertised union admitted. Keep annotations only.
+    if (branches.every(constrainsValues)) node.oneOf = branches
+    return node
+  }
+
   if (type === undefined) return node
   node.type = type
 
@@ -488,16 +514,6 @@ function normalizeScalarEnum(candidate: unknown, type: string): JsonSchemaScalar
   const values = candidate.filter((entry): entry is JsonSchemaScalar =>
     scalarMatches(type as JsonSchemaScalarType, entry))
   return values.length > 0 ? values : undefined
-}
-
-export function assertObjectJsonSchema(schema: unknown): asserts schema is ObjectJsonSchema {
-  const violations: string[] = []
-  checkSchemaNode(schema, 'schema', violations, new Set())
-  if (violations.length === 0
-    && (!isJsonSchemaRecord(schema) || !Object.hasOwn(schema, 'type') || schema.type !== 'object')) {
-    violations.push('schema.type must be "object" (structured output is object-rooted)')
-  }
-  if (violations.length > 0) throw new JsonSchemaError(violations)
 }
 
 /** Safely test the lossless JSON boundary when a getter may throw. */

@@ -335,6 +335,43 @@ describe('apply (plugin lifecycle)', () => {
     expect(mockClose).toHaveBeenCalled()
   })
 
+  it('registers an advertised input schema outside the enforced subset instead of failing startup', async () => {
+    mockListTools.mockResolvedValue({
+      tools: [{
+        name: 'browser_click',
+        description: 'Click an element.',
+        inputSchema: {
+          $schema: 'https://json-schema.org/draft/2020-12/schema',
+          type: 'object',
+          properties: {
+            element: { type: 'string', description: 'Human-readable element description', minLength: 1 },
+            button: { type: 'string', enum: ['left', 'right', 3] },
+            boxes: {
+              type: 'array',
+              items: [{ type: 'object', propertyNames: { type: 'string' }, additionalProperties: { type: 'number' } }],
+            },
+          },
+          required: ['element'],
+          additionalProperties: false,
+        },
+      }],
+      nextCursor: undefined,
+    })
+
+    await apply(ctx, { ...stdioConfig, failOnStartupError: true, reconnect: { enabled: false } })
+
+    expect(ctx.tools.get('mcp__srv__browser_click')?.parameters).toStrictEqual({
+      type: 'object',
+      properties: {
+        element: { type: 'string', description: 'Human-readable element description' },
+        button: { type: 'string', enum: ['left', 'right'] },
+        boxes: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      },
+      required: ['element'],
+      additionalProperties: false,
+    })
+  })
+
   it('preserves strict startup registration when list_changed arrives before connect resolves', async () => {
     ctx.tools.register({
       name: 'mcp__srv__remote',

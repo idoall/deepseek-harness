@@ -18,7 +18,7 @@ Status: implemented
 
 `@deepseek-ai/dsh-experimental-browser-use-runtime` 在 `peerDependencies` 与 `devDependencies` 中成对声明 `@deepseek-ai/dsh-scope`，与其他所有 scope 消费方一致；profile 安装现在解析到 harness 的那一份，而不再物化第二份（[源码](../../../../packages/experimental/browser-use-runtime/package.json)）。
 
-`dsh-mcp-client` 通过 `dsh-tools` 的 `normalizeAdvertisedJsonSchema` 把 advertised input schema 规范化进受限子集：受支持的关键字保留，未知词汇移除，`required` 过滤为仍然存在的属性，子 schema 形式的 `additionalProperties` 变为开放默认值，`oneOf` 优先于同级约束，若某个分支会变成无约束则整体丢弃 `oneOf`，无法表示的根降级为无约束 schema（[源码](../../../../packages/core/tools/src/json-schema.ts)）。
+`dsh-mcp-client` 通过 `dsh-tools` 的 `normalizeAdvertisedJsonSchema` 把 advertised input schema 规范化进受限子集：受支持的关键字保留，未知词汇移除，`required` 过滤为仍然存在的属性，子 schema 形式的 `additionalProperties` 变为开放默认值，受限子集拒绝 `type` 与 `oneOf` 并存，因此声明的 `type` 获胜、union 被丢弃——工具参数以对象为根，union 只是收窄它——而没有可表示 `type` 的节点保留其 union，除非某个分支会规范化成无约束 schema（[源码](../../../../packages/core/tools/src/json-schema.ts)）。
 
 launch 模式允许每个存活 Session 各持有一个浏览器。并发 Session 各自拥有隔离的 Chromium 连接，挂载始终按 Session 生效。
 
@@ -38,4 +38,4 @@ launch 模式允许每个存活 Session 各持有一个浏览器。并发 Sessio
 
 面向模型的 input schema 现在可能弱于 advertised 的那一份：仅被不支持关键字排除的取值会到达 MCP server，server 以普通工具错误报告该违规。每条受支持的约束都被保留，无法表示的根仍降级为无约束 JSON。
 
-`copies.spec.ts` 在同一进程内加载两份 `dsh-scope`，断言两份副本读到相同的标签、父子链与 carrier 标记；在修复前的模块内 symbol 下它会失败。`apply.spec.ts` 在 `failOnStartupError: true` 下注册一个 advertised input schema 带 `$schema`、`propertyNames`、`minimum` 和子 schema 形式 `additionalProperties` 的工具。`mcp.spec.ts` 在 launch 模式下为两个 Session 挂载同一 provider，断言每个 Session 持有自己的浏览器，且没有任何浏览器工具进入全局层。
+`copies.spec.ts` 在同一进程内加载两份 `dsh-scope`，断言两份副本读到相同的标签、父子链与 carrier 标记；在修复前的模块内 symbol 下它会失败。工具目录测试要求每个已发布工具的 `parameters.type === 'object'`；它否决了「union 优先」的规则——该规则会把同样经这座桥注册的 `stagehand_tabs` 改写成没有 type 的 `oneOf` 根——现在它固定了「声明的 type 优先」。`apply.spec.ts` 在 `failOnStartupError: true` 下注册一个 advertised input schema 带 `$schema`、`propertyNames`、`minimum` 和子 schema 形式 `additionalProperties` 的工具。`mcp.spec.ts` 在 launch 模式下为两个 Session 挂载同一 provider，断言每个 Session 持有自己的浏览器，且没有任何浏览器工具进入全局层。
